@@ -1,0 +1,42 @@
+name: Postgres CI/CD
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**'
+      - '!**.md'
+  release:
+    types: [published]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        arch: [armhf, armv7, aarch64, amd64]
+      fail-fast: true
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Update config.json if release
+      run: |
+        export RELEASE=$( echo $GITHUB_REF | cut -d/ -f3 | sed s/v// )
+        jq ".version=\"$RELEASE\"" < config.json > config_release.json
+        rm config.json && mv config_release.json config.json
+      if: ${{ github.event_name == 'release' }}
+    - name: Login to docker hub
+      run: sudo docker login -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PASSWORD }}
+    - name: Create docker image
+      run: |
+        sudo docker run \
+              --rm \
+              --privileged \
+              -v /run/docker.sock:/run/docker.sock:rw \
+              -v ~/.docker:/root/.docker \
+              -v $(pwd)/$GITHUB_WORKFLOW:/data homeassistant/amd64-builder \
+              --${{ matrix.arch }} \
+              --target /data

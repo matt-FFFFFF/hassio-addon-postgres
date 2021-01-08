@@ -1,0 +1,66 @@
+on:
+  workflow_dispatch:
+    inputs:
+      semverIncrement:
+        description: Increment major/minor/patch using values of m/i/p
+        required: true
+        default: i
+
+name: Create release
+
+jobs:
+  build:
+    name: create_release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Postgres
+        uses: actions/checkout@v2
+        with:
+          path: postgres
+      - name: Get latest release
+        run: |
+          echo "latest_release=$(curl --silent https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest | jq -r .tag_name | sed s/v// )" >> $GITHUB_ENV
+      - name: Increment semver
+        id: semver
+        uses: matt-FFFFFF/simple-semver@v0.1.0
+        with:
+          semver-input: ${{ env.latest_release }}
+          increment: ${{ github.event.inputs.semverIncrement }}
+      - name: Create tag
+        run: |
+          git config --global user.email "actions.no-reply@github.com"
+          git config --global user.name "GitHub Actions"
+          git tag -a v${{ steps.semver.outputs.semver }} -m 'Release automation'
+          git push --tags
+        working-directory: ${{ github.workspace }}/postgres
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.REPO_PAT }}
+        with:
+          tag_name: v${{ steps.semver.outputs.semver }}
+          release_name: Release v${{ steps.semver.outputs.semver }}
+          body_path: ${{ github.workspace }}/postgres/CHANGELOG.md
+          draft: false
+          prerelease: false
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          path: repo
+          repository: matt-FFFFFF/hassio-addon-repository
+          token: ${{ secrets.REPO_PAT }}
+      - name: Update addon repo
+        run: |
+          cp -vf ${{ github.workspace }}/postgres/*.png ${{ github.workspace }}/repo/postgres
+          cp -vf ${{ github.workspace }}/postgres/*.md ${{ github.workspace }}/repo/postgres
+          jq '.version="${{ steps.semver.outputs.semver }}"' < ${{ github.workspace }}/postgres/config.json > ${{ github.workspace }}/repo/postgres/config.json
+      - name: Add changes to addon repo
+        run: |
+          if [ "$(git status -s)" ]; then
+            git add .
+            git commit -m 'Update from hassio-addon-postgres'
+            git push
+          fi
+        working-directory: ${{ github.workspace }}/repo/postgres
+
